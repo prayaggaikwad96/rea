@@ -30,7 +30,7 @@ const makePull = (
   state: "open",
   draft: false,
   body: readyBody,
-  head: { sha: "a".repeat(40) },
+  head: { sha: "a".repeat(40), repo: null },
   base: { ref: "main" },
   ...changes,
 });
@@ -215,6 +215,18 @@ describe("GitHub status boundary", () => {
     expect((await runReadinessCheck(input))?.state).toBe("pending");
     expect(input.createCommitStatus).toHaveBeenLastCalledWith(
       expect.objectContaining({ sha: "b".repeat(40), state: "pending" }),
+    );
+  });
+
+  it("looks up the head association in the fork that owns the commit", async () => {
+    const sha = "a".repeat(40);
+    const input = fixture({
+      head: { sha, repo: { name: "rea", owner: { login: "contributor" } } },
+    });
+    expect((await runReadinessCheck(input))?.state).toBe("success");
+    expect(input.paginate).toHaveBeenCalledWith(
+      input.github.rest.repos.listPullRequestsAssociatedWithCommit,
+      { owner: "contributor", repo: "rea", commit_sha: sha, per_page: 100 },
     );
   });
 

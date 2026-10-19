@@ -218,6 +218,15 @@ describe("GitHub status boundary", () => {
     );
   });
 
+  it("falls back to the base repository when the head fork is unavailable", async () => {
+    const input = fixture({ head: { sha: "a".repeat(40), repo: null } });
+    expect((await runReadinessCheck(input))?.state).toBe("success");
+    expect(input.paginate).toHaveBeenCalledWith(
+      input.github.rest.repos.listPullRequestsAssociatedWithCommit,
+      { owner: "morluto", repo: "rea", commit_sha: "a".repeat(40), per_page: 100 },
+    );
+  });
+
   it("looks up the head association in the fork that owns the commit", async () => {
     const sha = "a".repeat(40);
     const input = fixture({

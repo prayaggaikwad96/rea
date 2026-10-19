@@ -196,7 +196,7 @@ describe("GitHub status boundary", () => {
 
   it("keeps the initial declaration valid after later pushes", async () => {
     for (const sha of ["a".repeat(40), "b".repeat(40)]) {
-      const input = fixture({ head: { sha } });
+      const input = fixture({ head: { sha, repo: null } });
       expect((await runReadinessCheck(input))?.state).toBe("success");
       expect(input.createCommitStatus).toHaveBeenLastCalledWith(
         expect.objectContaining({ sha, state: "success" }),

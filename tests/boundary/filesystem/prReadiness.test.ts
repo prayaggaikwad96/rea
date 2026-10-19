@@ -220,6 +220,7 @@ describe("GitHub status boundary", () => {
 
   it("falls back to the base repository when the head fork is unavailable", async () => {
     const input = fixture({ head: { sha: "a".repeat(40), repo: null } });
+    input.paginate.mockResolvedValue([input.pull]);
     expect((await runReadinessCheck(input))?.state).toBe("success");
     expect(input.paginate).toHaveBeenCalledWith(
       input.github.rest.repos.listPullRequestsAssociatedWithCommit,

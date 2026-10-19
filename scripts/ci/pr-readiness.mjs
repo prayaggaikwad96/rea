@@ -125,9 +125,16 @@ export async function runReadinessCheck({ github, context, core }) {
   );
   let verdict = evaluateReadiness(pull, template);
   if (verdict.state === "success") {
+    // GitHub indexes a fork's commit association in the repository that
+    // owns the head commit, not the base repository. Use that repository
+    // when available, falling back if the fork has been deleted.
+    const headRepository =
+      pull.head.repo === null || pull.head.repo === undefined
+        ? repository
+        : { owner: pull.head.repo.owner.login, repo: pull.head.repo.name };
     const associated = await github.paginate(
       github.rest.repos.listPullRequestsAssociatedWithCommit,
-      { ...repository, commit_sha: pull.head.sha, per_page: 100 },
+      { ...headRepository, commit_sha: pull.head.sha, per_page: 100 },
     );
     if (
       !associated.some(

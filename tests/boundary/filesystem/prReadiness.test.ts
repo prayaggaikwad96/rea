@@ -194,27 +194,46 @@ describe("initial author declaration", () => {
 });
 
 describe("GitHub status boundary", () => {
-  it("looks up commit associations in the repository that owns a fork head", async () => {
-    const sha = "a".repeat(40);
-    const input = fixture({
-      head: { sha, repo: { name: "rea", owner: { login: "contributor" } } },
-    });
-    expect((await runReadinessCheck(input))?.state).toBe("success");
-    expect(input.paginate).toHaveBeenCalledWith(
-      input.github.rest.repos.listPullRequestsAssociatedWithCommit,
-      { owner: "contributor", repo: "rea", commit_sha: sha, per_page: 100 },
-    );
-  });
+  it(
+    "looks up commit associations in the repository that owns a fork head",
+    async () => {
+      const sha = "a".repeat(40);
+      const input = fixture({
+        head: {
+          sha,
+          repo: { name: "rea", owner: { login: "contributor" } },
+        },
+      });
+      expect((await runReadinessCheck(input))?.state).toBe("success");
+      expect(input.paginate).toHaveBeenCalledWith(
+        input.github.rest.repos.listPullRequestsAssociatedWithCommit,
+        {
+          owner: "contributor",
+          repo: "rea",
+          commit_sha: sha,
+          per_page: 100,
+        },
+      );
+    },
+  );
 
-  it("falls back to the base repository when the head fork is unavailable", async () => {
-    const input = fixture({ head: { sha: "a".repeat(40), repo: null } });
-    input.paginate.mockResolvedValue([input.pull]);
-    expect((await runReadinessCheck(input))?.state).toBe("success");
-    expect(input.paginate).toHaveBeenCalledWith(
-      input.github.rest.repos.listPullRequestsAssociatedWithCommit,
-      { owner: "morluto", repo: "rea", commit_sha: "a".repeat(40), per_page: 100 },
-    );
-  });
+  it(
+    "falls back to the base repository when the head fork is unavailable",
+    async () => {
+      const input = fixture({ head: { sha: "a".repeat(40), repo: null } });
+      input.paginate.mockResolvedValue([input.pull]);
+      expect((await runReadinessCheck(input))?.state).toBe("success");
+      expect(input.paginate).toHaveBeenCalledWith(
+        input.github.rest.repos.listPullRequestsAssociatedWithCommit,
+        {
+          owner: "morluto",
+          repo: "rea",
+          commit_sha: "a".repeat(40),
+          per_page: 100,
+        },
+      );
+    },
+  );
 
   it("publishes failure on the actual PR head when declarations are unchecked", async () => {
     const input = fixture({ body: readyBody.replaceAll("[x]", "[ ]") });

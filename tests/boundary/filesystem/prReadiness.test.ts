@@ -309,6 +309,14 @@ describe("GitHub status boundary", () => {
   it("keeps readiness unknown when GitHub has not associated the head with this PR", async () => {
     const input = fixture();
     input.paginate.mockResolvedValue([]);
+    input.github.graphql.mockResolvedValue({
+      repository: {
+        pullRequests: {
+          nodes: [],
+          pageInfo: { hasNextPage: false, endCursor: null },
+        },
+      },
+    });
     expect((await runReadinessCheck(input))?.state).toBe("pending");
     expect(input.core.setFailed).not.toHaveBeenCalled();
   });

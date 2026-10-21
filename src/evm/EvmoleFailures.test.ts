@@ -1,7 +1,12 @@
 import { expect, it } from "vitest";
 import { evmInterfaceFailure } from "./EvmoleFailures.js";
 import { OwnedCommandFailure } from "../process/OwnedCommand.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  AnalysisInputError,
+  AnalysisResourceConstraintError,
+} from "../domain/analysisErrorCore.js";
+import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import type { ProviderProcessSnapshot } from "../process/ProviderProcess.js";
 
 const snapshot: ProviderProcessSnapshot = {
@@ -69,3 +74,41 @@ it.each([
     expect(result.cleanupResources).toEqual(["exact-owner"]);
   }
 });
+
+it("classifies an oversized input artifact as a fixed file-size resource constraint", () => {
+  const source = new ArtifactReaderFailure(
+    "limit",
+    "Selected artifact exceeds 4194304 bytes: /selected.hex",
+    { boundary: "file-size" },
+  );
+
+  const result = evmInterfaceFailure(source, "artifact-read", "/selected.hex");
+
+  expect(result).toBeInstanceOf(AnalysisResourceConstraintError);
+  expect(result).toMatchObject({
+    operation: "inspect_evm_interface",
+    resource: "file-size",
+    reportedLimits: { maximum_input_bytes: 4194304 },
+    retryable: false,
+  });
+  expect(result.message).toContain("4194304 bytes");
+  expect(result.remediationAction).toContain("Do not truncate required bytes");
+});
+
+it.each([
+  { boundary: undefined, reason: "limit" },
+  { boundary: "capacity" as const, reason: "limit" },
+  { boundary: undefined, reason: "path" },
+  { boundary: undefined, reason: "format" },
+])(
+  "keeps non-file-size artifact refusals as input errors (%j)",
+  ({ boundary, reason }) => {
+    const source = new ArtifactReaderFailure(
+      reason,
+      "Artifact read rejected",
+      boundary === undefined ? undefined : { boundary },
+    );
+    const result = evmInterfaceFailure(source, "artifact-read", "/selected.hex");
+    expect(result).toBeInstanceOf(AnalysisInputError);
+  },
+);

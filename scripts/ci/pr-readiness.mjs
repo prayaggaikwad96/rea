@@ -176,9 +176,23 @@ export async function runReadinessCheck({ github, context, core }) {
   );
   let verdict = evaluateReadiness(pull, template);
   if (verdict.state === "success") {
+    // Commit association is indexed in the repository that owns the head SHA.
+    // A deleted/unavailable fork may omit head.repo, so retain the base-repo
+    // fallback in that case.
+    const headRepository =
+      pull.head.repo === null || pull.head.repo === undefined
+        ? repository
+        : {
+            owner: pull.head.repo.owner.login,
+            repo: pull.head.repo.name,
+          };
     let associated = await github.paginate(
       github.rest.repos.listPullRequestsAssociatedWithCommit,
-      { ...repository, commit_sha: pull.head.sha, per_page: 100 },
+      {
+        ...headRepository,
+        commit_sha: pull.head.sha,
+        per_page: 100,
+      },
     );
     const ownsHead = (other) =>
       other.number === number &&

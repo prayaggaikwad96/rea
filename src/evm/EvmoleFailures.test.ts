@@ -36,17 +36,15 @@ it("classifies an oversized input artifact as a fixed file-size resource constra
   expect(result.remediationAction).toContain("Do not truncate required bytes");
 });
 
-it.each([
-  { boundary: undefined, reason: "limit" as const },
-  { boundary: "capacity" as const, reason: "limit" as const },
-  { boundary: undefined, reason: "path" as const },
-  { boundary: undefined, reason: "format" as const },
-])("keeps non-file-size artifact refusals as input errors (%j)", ({ boundary, reason }) => {
-  const source = new ArtifactReaderFailure(
-    reason,
-    "Artifact read rejected",
-    boundary === undefined ? undefined : { boundary },
-  );
-  const result = evmInterfaceFailure(source, "artifact-read", "/selected.hex");
-  expect(result).toBeInstanceOf(AnalysisInputError);
+it("keeps non-file-size artifact refusals as input errors", () => {
+  const cases = [
+    new ArtifactReaderFailure("limit", "Artifact read rejected"),
+    new ArtifactReaderFailure("limit", "Artifact read rejected", { boundary: "capacity" }),
+    new ArtifactReaderFailure("path", "Artifact read rejected"),
+    new ArtifactReaderFailure("format", "Artifact read rejected"),
+  ];
+  for (const source of cases) {
+    expect(evmInterfaceFailure(source, "artifact-read", "/selected.hex"))
+      .toBeInstanceOf(AnalysisInputError);
+  }
 });

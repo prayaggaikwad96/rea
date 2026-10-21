@@ -1,5 +1,50 @@
 import { readFile } from "node:fs/promises";
 
+const OPEN_HEADS_QUERY = `query ReadinessOpenHeads($owner: String!, $name: String!, $after: String) {
+  repository(owner: $owner, name: $name) {
+    pullRequests(first: 100, after: $after, states: OPEN, orderBy: {field: CREATED_AT, direction: ASC}) {
+      nodes { number headRefOid }
+      pageInfo { hasNextPage endCursor }
+    }
+  }
+}`;
+
+/** Use complete open-PR head inventory if commit association indexing lags. */
+async function openHeadsMatching(github, repository, sha) {
+  const matches = [];
+  const numbers = new Set();
+  const cursors = new Set();
+  let after = null;
+  do {
+    const response = await github.graphql(OPEN_HEADS_QUERY, {
+      owner: repository.owner,
+      name: repository.repo,
+      after,
+    });
+    const page = response?.repository?.pullRequests;
+    if (!Array.isArray(page?.nodes) || typeof page.pageInfo?.hasNextPage !== "boolean") {
+      throw new Error("GitHub returned incomplete open-PR head metadata.");
+    }
+    for (const node of page.nodes) {
+      if (!Number.isSafeInteger(node?.number) || node.number <= 0 ||
+          typeof node.headRefOid !== "string" ||
+          !/^(?:[a-f\\d]{40}|[a-f\\d]{64})$/u.test(node.headRefOid) ||
+          numbers.has(node.number)) {
+        throw new Error("GitHub returned invalid or repeated open-PR head metadata.");
+      }
+      numbers.add(node.number);
+      if (node.headRefOid === sha) matches.push({ number: node.number, state: "open", head: { sha } });
+    }
+    if (!page.pageInfo.hasNextPage) return matches;
+    const next = page.pageInfo.endCursor;
+    if (typeof next !== "string" || next.length === 0 || cursors.has(next)) {
+      throw new Error("GitHub open-PR head pagination did not advance.");
+    }
+    cursors.add(next);
+    after = next;
+  } while (true);
+}
+
 const result = (state, description) => ({ state, description });
 
 function readinessLines(markdown) {
@@ -132,18 +177,17 @@ export async function runReadinessCheck({ github, context, core }) {
       pull.head.repo === null || pull.head.repo === undefined
         ? repository
         : { owner: pull.head.repo.owner.login, repo: pull.head.repo.name };
-    const associated = await github.paginate(
+    let associated = await github.paginate(
       github.rest.repos.listPullRequestsAssociatedWithCommit,
       { ...headRepository, commit_sha: pull.head.sha, per_page: 100 },
     );
-    if (
-      !associated.some(
-        (other) =>
-          other.number === number &&
-          other.state === "open" &&
-          other.head.sha === pull.head.sha,
-      )
-    )
+    const ownsHead = (other) =>
+      other.number === number &&
+      other.state === "open" &&
+      other.head.sha === pull.head.sha;
+    if (!associated.some(ownsHead))
+      associated = await openHeadsMatching(github, repository, pull.head.sha);
+    if (!associated.some(ownsHead))
       verdict = result(
         "pending",
         "GitHub has not confirmed this PR's head association; rerun PR readiness.",

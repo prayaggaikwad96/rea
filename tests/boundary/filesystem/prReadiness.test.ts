@@ -55,6 +55,14 @@ function fixture(changes: Partial<ReadinessPullRequest> = {}) {
       },
     },
     paginate,
+    graphql: vi.fn(async () => ({
+      repository: {
+        pullRequests: {
+          nodes: [{ number: pull.number, headRefOid: pull.head.sha }],
+          pageInfo: { hasNextPage: false, endCursor: null },
+        },
+      },
+    })),
   };
   const context = {
     repo: { owner: "morluto", repo: "rea" },
@@ -237,6 +245,32 @@ describe("GitHub status boundary", () => {
     expect(input.paginate).toHaveBeenCalledWith(
       input.github.rest.repos.listPullRequestsAssociatedWithCommit,
       { owner: "contributor", repo: "rea", commit_sha: sha, per_page: 100 },
+    );
+  });
+
+  it("checks the complete live open-PR head inventory when commit indexing lags", async () => {
+    const input = fixture();
+    input.paginate.mockResolvedValue([]);
+    expect((await runReadinessCheck(input))?.state).toBe("success");
+    expect(input.github.graphql).toHaveBeenCalledWith(
+      expect.stringContaining("query ReadinessOpenHeads"),
+      { owner: "morluto", name: "rea", after: null },
+    );
+  });
+
+  it("fails closed when live open-PR pagination metadata is invalid", async () => {
+    const input = fixture();
+    input.paginate.mockResolvedValue([]);
+    input.github.graphql.mockResolvedValue({
+      repository: {
+        pullRequests: {
+          nodes: [{ number: 42, headRefOid: input.pull.head.sha }],
+          pageInfo: { hasNextPage: true, endCursor: null },
+        },
+      },
+    });
+    await expect(runReadinessCheck(input)).rejects.toThrow(
+      "GitHub open-PR head pagination did not advance.",
     );
   });
 

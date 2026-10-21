@@ -85,6 +85,9 @@ it("classifies an oversized input artifact as a fixed file-size resource constra
   const result = evmInterfaceFailure(source, "artifact-read", "/selected.hex");
 
   expect(result).toBeInstanceOf(AnalysisResourceConstraintError);
+  if (!(result instanceof AnalysisResourceConstraintError)) {
+    throw new Error("Expected a file-size resource constraint");
+  }
   expect(result).toMatchObject({
     operation: "inspect_evm_interface",
     resource: "file-size",
@@ -96,10 +99,10 @@ it("classifies an oversized input artifact as a fixed file-size resource constra
 });
 
 it.each([
-  { boundary: undefined, reason: "limit" },
-  { boundary: "capacity" as const, reason: "limit" },
-  { boundary: undefined, reason: "path" },
-  { boundary: undefined, reason: "format" },
+  { boundary: undefined, reason: "limit" as const },
+  { boundary: "capacity" as const, reason: "limit" as const },
+  { boundary: undefined, reason: "path" as const },
+  { boundary: undefined, reason: "format" as const },
 ])(
   "keeps non-file-size artifact refusals as input errors (%j)",
   ({ boundary, reason }) => {

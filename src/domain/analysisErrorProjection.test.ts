@@ -24,6 +24,51 @@ import { projectAnalysisError } from "./analysisErrorProjection.js";
 import { ProviderSelectionError } from "./providerSelectionError.js";
 import { analysisErrorProjectionSchema } from "../contracts/errorSchemas.js";
 import { nativeCallPartialObservationSchema } from "./native/nativeCallPartialObservation.js";
+import { providerConfigurationRefusal } from "./providerConfigurationRefusal.js";
+
+describe("provider configuration refusal diagnostics", () => {
+  it("projects producer-owned diagnostics from a capability refusal", () => {
+    const diagnostics = {
+      selected_binary: "/tools/adb",
+      path_source: "environment",
+      version_probe: "unrecognized_output",
+      stdout: "unexpected version banner",
+      stderr: "probe warning",
+      observed_count: 0,
+    } as const;
+    const failure = Object.assign(
+      new Error("The selected binary did not report a usable version"),
+      { diagnostics },
+    );
+
+    const projected = projectAnalysisError(
+      providerConfigurationRefusal("adb", "list_adb_devices", failure),
+    );
+
+    expect(projected).toMatchObject({
+      code: "capability_unavailable",
+      details: { diagnostics },
+    });
+    expect(analysisErrorProjectionSchema.safeParse(projected).success).toBe(
+      true,
+    );
+  });
+
+  it("leaves projection without diagnostics unchanged", () => {
+    const projected = projectAnalysisError(
+      providerConfigurationRefusal(
+        "adb",
+        "list_adb_devices",
+        new Error("missing binary"),
+      ),
+    );
+    expect(projected).toMatchObject({
+      code: "capability_unavailable",
+      message: expect.stringContaining("missing binary"),
+    });
+    expect(projected.details).not.toHaveProperty("diagnostics");
+  });
+});
 
 describe("agent recovery metadata", () => {
   it("does not mark deterministic input validation as retryable", () => {

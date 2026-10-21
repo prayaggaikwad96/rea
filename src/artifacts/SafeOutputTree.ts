@@ -578,8 +578,14 @@ export class SafeOutputTree {
   async closeHandles(): Promise<void> {
     const failures: unknown[] = [];
     for (const owner of this.#openHandles) {
+      // Once a pending write's handle closes, don't leave a stale closed
+      // descriptor in the map used to resume rollback after partial removal.
+      const paths = [...this.#openFiles.entries()]
+        .filter(([, candidate]) => candidate === owner)
+        .map(([path]) => path);
       try {
         await this.#closeHandle(owner);
+        for (const path of paths) this.#openFiles.delete(path);
       } catch (cause: unknown) {
         failures.push(cause);
       }

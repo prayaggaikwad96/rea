@@ -1,5 +1,6 @@
 import { setImmediate } from "node:timers/promises";
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
+import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 
 const NATIVE_MATCHING_REPRESENTATION_BYTES = 96 * 1024 * 1024;
 

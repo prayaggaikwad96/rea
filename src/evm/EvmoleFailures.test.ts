@@ -1,12 +1,7 @@
 import { expect, it } from "vitest";
 import { evmInterfaceFailure } from "./EvmoleFailures.js";
 import { OwnedCommandFailure } from "../process/OwnedCommand.js";
-import {
-  AnalysisCancelledError,
-  AnalysisInputError,
-  AnalysisResourceConstraintError,
-} from "../domain/analysisErrorCore.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import type { ProviderProcessSnapshot } from "../process/ProviderProcess.js";
 
 const snapshot: ProviderProcessSnapshot = {

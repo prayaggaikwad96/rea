@@ -106,4 +106,54 @@ process.stdin.on("data", (chunk) => {
         "automatic-loading disable command",
       );
   });
+  it("correlates a completion record appended directly to shell output", async () => {
+    directory = await mkdtemp(join(tmpdir(), "rea-gdb-inline-completion-"));
+    const provider = join(directory, "fake-gdb.mjs");
+    await writeFile(
+      provider,
+      `#!${process.execPath}
+process.stdout.write("(gdb)\\n");
+let input = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+  input += chunk;
+  for (;;) {
+    const boundary = input.indexOf("\\n");
+    if (boundary < 0) break;
+    const line = input.slice(0, boundary);
+    input = input.slice(boundary + 1);
+    const match = /^(\\d+)/.exec(line);
+    if (!match) continue;
+    if (line.includes("list-thread-groups"))
+      process.stdout.write(match[1] + "^done,groups=[]\\n");
+    else if (line.includes("-interpreter-exec console"))
+      process.stdout.write("abc" + match[1] + "^done\\n");
+    else process.stdout.write(match[1] + "^done\\n");
+  }
+});
+`,
+    );
+    await chmod(provider, 0o700);
+    const manager = new GdbSessionManager({
+      platform: "linux",
+      environment: { REA_GDB_COMMAND: provider },
+      commandTimeoutMs: 250,
+    });
+    managers.push(manager);
+
+    const started = await manager.start();
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+
+    const result = await manager.execute(
+      started.value.session_id,
+      "shell printf abc",
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.result.completion_status).toBe("complete");
+      expect(result.value.result.mi).toMatch(/\\d+\\^done/u);
+      expect(result.value.result.records).toContain("abc");
+    }
+  });
 });

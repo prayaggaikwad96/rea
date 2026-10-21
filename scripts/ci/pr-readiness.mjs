@@ -28,7 +28,7 @@ async function openHeadsMatching(github, repository, sha) {
     for (const node of page.nodes) {
       if (!Number.isSafeInteger(node?.number) || node.number <= 0 ||
           typeof node.headRefOid !== "string" ||
-          !/^(?:[a-f\\d]{40}|[a-f\\d]{64})$/u.test(node.headRefOid) ||
+          !/^(?:[a-f\d]{40}|[a-f\d]{64})$/u.test(node.headRefOid) ||
           numbers.has(node.number)) {
         throw new Error("GitHub returned invalid or repeated open-PR head metadata.");
       }

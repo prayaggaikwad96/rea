@@ -258,6 +258,17 @@ describe("GitHub status boundary", () => {
     );
   });
 
+  it("accepts valid commit SHAs containing numeric characters in the live inventory", async () => {
+    const sha = "1".repeat(40);
+    const input = fixture({ head: { sha, repo: null } });
+    input.paginate.mockResolvedValue([]);
+    expect((await runReadinessCheck(input))?.state).toBe("success");
+    expect(input.github.graphql).toHaveBeenCalledWith(
+      expect.stringContaining("query ReadinessOpenHeads"),
+      { owner: "morluto", name: "rea", after: null },
+    );
+  });
+
   it("fails closed when live open-PR pagination metadata is invalid", async () => {
     const input = fixture();
     input.paginate.mockResolvedValue([]);

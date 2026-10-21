@@ -3,7 +3,7 @@ export interface ReadinessPullRequest {
   readonly state: "open" | "closed";
   readonly draft: boolean;
   readonly body: string | null;
-  readonly head: { readonly sha: string };
+  readonly head: { readonly sha: string; readonly repo?: { readonly name: string; readonly owner: { readonly login: string } } | null };
   readonly base: { readonly ref: string };
 }
 export interface ReadinessResult {
@@ -32,6 +32,7 @@ export interface ReadinessGitHub {
       readonly listPullRequestsAssociatedWithCommit: unknown;
     };
   };
+  graphql(query: string, variables: { owner: string; name: string; after: string | null }): Promise<unknown>;
   paginate(
     method: unknown,
     input: {

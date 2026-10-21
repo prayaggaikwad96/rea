@@ -1616,9 +1616,7 @@ export class GdbSessionManager {
         }
         continue;
       }
-      // GDB may append the tokenized MI completion directly to shell stdout,
-      // e.g. "abc4^done", instead of starting a new LF-delimited record.
-      const match = /(?:^|[^\d])(\d+)\^(done|running|connected|error|exit)(?:,|$)/u.exec(
+      const match = /^(\d+)\^(done|running|connected|error|exit)(?:,|$)/u.exec(
         line,
       );
       if (match === null) continue;

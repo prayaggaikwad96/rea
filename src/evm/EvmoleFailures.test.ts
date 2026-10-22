@@ -4,6 +4,66 @@ import { OwnedCommandFailure } from "../process/OwnedCommand.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
+  AnalysisInputError,
+  AnalysisResourceConstraintError,
+} from "../domain/analysisErrorCore.js";
+import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+
+it("projects oversized input file-size constraints with a stable remediation contract", () => {
+  const source = new ArtifactReaderFailure(
+    "limit",
+    "Selected artifact exceeds 4194304 bytes: /selected.hex",
+    { boundary: "file-size" },
+  );
+  const projected = projectAnalysisError(
+    evmInterfaceFailure(source, "artifact-read", "/selected.hex"),
+  );
+  expect(projected).toMatchObject({
+    code: "resource_constraint",
+    details: {
+      resource: "file-size",
+      reported_limits: { maximum_input_bytes: 4194304 },
+      retryable: false,
+    },
+  });
+  expect(projected.remediation.action).toContain(
+    "Select a suitable stable artifact within the reported input byte allowance",
+  );
+  expect(projected.remediation.action).toContain("Do not truncate required bytes");
+});
+
+it("classifies a file-size limit reached during streaming the same as an initial size refusal", () => {
+  const source = new ArtifactReaderFailure(
+    "limit",
+    "Artifact grew beyond 4194304 bytes while reading: /selected.hex",
+    { boundary: "file-size" },
+  );
+  const result = evmInterfaceFailure(source, "artifact-read", "/selected.hex");
+  expect(result).toBeInstanceOf(AnalysisResourceConstraintError);
+  if (!(result instanceof AnalysisResourceConstraintError)) {
+    throw new Error("Expected a file-size resource constraint");
+  }
+  expect(result).toMatchObject({
+    operation: "inspect_evm_interface",
+    resource: "file-size",
+    reportedLimits: { maximum_input_bytes: 4194304 },
+    retryable: false,
+  });
+  expect(result.message).toContain("4194304 bytes");
+});
+
+it("preserves input classification for capacity-boundary failures", () => {
+  const source = new ArtifactReaderFailure(
+    "limit",
+    "Artifact read rejected",
+    { boundary: "capacity" },
+  );
+  expect(
+    evmInterfaceFailure(source, "artifact-read", "/selected.hex"),
+  ).toBeInstanceOf(AnalysisInputError);
+});
+
+import {
   DEFAULT_EVM_TIMEOUT_MS,
   MAX_EVM_TIMEOUT_MS,
 } from "../domain/evm/evmInterface.js";

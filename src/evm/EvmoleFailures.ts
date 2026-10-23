@@ -173,6 +173,24 @@ export const evmInterfaceFailure = (
       );
     if (
       phase === "artifact-read" &&
+      cause.reason === "limit" &&
+      cause.boundary === "file-size"
+    )
+      return new AnalysisResourceConstraintError(
+        "inspect_evm_interface",
+        "file-size",
+        cause.message,
+        { maximum_input_bytes: EVM_INTERFACE_LIMITS.inputBytes },
+        {
+          cause,
+          ...cleanupOptions,
+          retryable: false,
+          remediationAction:
+            "Select a suitable stable artifact within the reported input byte allowance. Do not truncate required bytes; retrying the unchanged oversized input will fail again.",
+        },
+      );
+    if (
+      phase === "artifact-read" &&
       ["limit", "path", "format"].includes(cause.reason)
     ) {
       const inputLimited = cause.reason === "limit";

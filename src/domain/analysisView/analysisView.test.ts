@@ -694,6 +694,88 @@ it("counts JavaScript summary coverage in module units", () => {
   expect(page.value.coverage).toMatchObject({ examined: 1, total: 1 });
 });
 
+it("counts parent and semantic graph limitations in the JavaScript summary", () => {
+  const analysis = analysisViewJavaScriptAnalysis();
+  const { graph_id: _graphId, ...semantic } = analysis.semantic_graph;
+  const semanticGraph = createJavaScriptSemanticGraph({
+    ...semantic,
+    limitations: [
+      "Semantic graph limitation.",
+      "Shared limitation.",
+    ],
+  });
+  const parent = {
+    ...javascriptParent({
+      ...analysis,
+      limitations: ["Analysis limitation.", "Shared limitation."],
+      graph: {
+        ...analysis.graph,
+        limitations: ["Application graph limitation."],
+      },
+      semantic_graph: semanticGraph,
+    }),
+    limitations: ["Parent limitation.", "Shared limitation."],
+  };
+  const result = projectAnalysisView(parent, { kind: "summary" });
+  if (!result.ok) throw result.error;
+  if (result.value.kind !== "summary")
+    throw new Error("expected summary view");
+
+  expect(result.value.summary.limitation_count).toBe(5);
+  expect(result.value.limitations).toEqual([
+    "Analysis limitation.",
+    "Application graph limitation.",
+    "Parent limitation.",
+    "Semantic graph limitation.",
+    "Shared limitation.",
+  ]);
+});
+
+it("counts all JavaScript summary limitations when the message budget truncates them", () => {
+  const analysis = analysisViewJavaScriptAnalysis();
+  const messages = ["a".repeat(2_400), "b".repeat(2_400), "c".repeat(2_400)];
+  const { graph_id: _graphId, ...semantic } = analysis.semantic_graph;
+  const semanticGraph = createJavaScriptSemanticGraph({
+    ...semantic,
+    limitations: [],
+  });
+  const boundedAnalysis = {
+    ...analysis,
+    limitations: messages,
+    graph: { ...analysis.graph, limitations: [] },
+    semantic_graph: semanticGraph,
+  };
+  const parent = {
+    ...javascriptParent(boundedAnalysis),
+    limitations: [],
+  };
+  const expectedLimitations = [
+    ...new Set([
+      ...parent.limitations,
+      ...boundedAnalysis.limitations,
+      ...boundedAnalysis.graph.limitations,
+      ...boundedAnalysis.semantic_graph.limitations,
+    ]),
+  ].sort();
+
+  const result = projectAnalysisView(parent, { kind: "summary" });
+  if (!result.ok) throw result.error;
+  if (result.value.kind !== "summary")
+    throw new Error("expected summary view");
+
+  expect(
+    result.value.limitations.some((message) =>
+      message.includes("additional limitations omitted"),
+    ),
+  ).toBe(true);
+  expect(result.value.limitations.length).toBeLessThan(
+    expectedLimitations.length,
+  );
+  expect(result.value.summary.limitation_count).toBe(
+    expectedLimitations.length,
+  );
+});
+
 it("projects JavaScript summary and preserves selected module observations", () => {
   const analysis = analysisViewJavaScriptAnalysisWithSource();
   const parent = javascriptParent(analysis);

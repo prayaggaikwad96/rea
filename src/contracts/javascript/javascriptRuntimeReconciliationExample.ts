@@ -11,9 +11,11 @@ import {
 } from "../../domain/javascript/javascriptSemanticGraph.js";
 import { JAVASCRIPT_SEMANTIC_RELATION_FAMILIES } from "../../domain/javascript/javascriptSemanticGraphSchemas.js";
 
+export const JAVASCRIPT_APPLICATION_EVIDENCE_SOURCE = "export const example = true;\n";
+
 const applicationSha256 = "1".repeat(64);
 const script = createWebTextArtifact(
-  "export const example = true;\n",
+  JAVASCRIPT_APPLICATION_EVIDENCE_SOURCE,
   "text/javascript",
 );
 const inputPath = "/Applications/Example.app/Contents/Resources/app";

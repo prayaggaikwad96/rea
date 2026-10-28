@@ -8,8 +8,8 @@ This is a remote-only audit of the personal fork `prayaggaikwad96/rea`. It recor
 
 - Upstream: [`morluto/rea`](https://github.com/morluto/rea), branch `main`.
 - Fork: [`prayaggaikwad96/rea`](https://github.com/prayaggaikwad96/rea), branch `main`.
-- Verified shared HEAD at audit time: `1e421242b97a533a5c03458ac074d4353ec17bf3`.
-- The fork default branch was safely fast-forwarded without force-push after verifying upstream's current head. It now exactly matches upstream main.
+- Historical common upstream HEAD: `1e421242b97a533a5c03458ac074d4353ec17bf3`. The upstream later advanced; current upstream HEAD observed during follow-up: `0a272d5cf5471f34eb0e686942357e27f2ee9507`.
+- The fork default branch was safely fast-forwarded to the prior upstream HEAD, but upstream subsequently advanced. The current fork has an audit-only commit after the common base, so it is not now a direct fast-forward to the latest upstream tip. Direct non-force ref updates were rejected by the GitHub connector. A draft review PR #11 stages the upstream tip for review: https://github.com/prayaggaikwad96/rea/pull/11. It is not merged and must not be described as synchronized yet.
 - The GitHub connector returned no commit status checks or workflow runs for this fork HEAD; synchronized commit identity does not itself prove tests passed.
 
 ## PR cleanup

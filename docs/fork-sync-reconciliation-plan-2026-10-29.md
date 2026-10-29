@@ -22,3 +22,7 @@ GitHub reports the current upstream and fork histories as divergent: 157 commits
 - The two fork-side commits need their full impact reviewed. Do not assume they are safe to discard because one is described as audit-only.
 - Local working-tree cleanliness, local-only refs, backups, and any unpushed local changes cannot be verified through the remote GitHub connector.
 - No source-code synchronization or tests are claimed by this document.
+
+## Review note
+
+The default-branch synchronization candidate must not merge this planning change as code synchronization. The two fork-side commits are part of the history to preserve and assess; changes in PR #11 are not a complete reconciliation. Keep this branch draft until a fresh candidate has an explicit inventory of preserved/superseded commits and verified tests.

@@ -1,36 +1,30 @@
-# Fork synchronization audit — 2026-10-28
+# Fork synchronization audit — refreshed 2026-10-29
 
 ## Scope
 
 This is a remote-only audit of the personal fork `prayaggaikwad96/rea`. It records default-branch synchronization and pull-request disposition visible through GitHub. It does not claim that every staged topic branch is merged or that tests have run locally.
 
-## Default branch
+## Default branch status
 
 - Upstream: [`morluto/rea`](https://github.com/morluto/rea), branch `main`.
 - Fork: [`prayaggaikwad96/rea`](https://github.com/prayaggaikwad96/rea), branch `main`.
-- Historical common upstream HEAD: `1e421242b97a533a5c03458ac074d4353ec17bf3`. Upstream `main` currently points to `c0c3902207d6b1a33709e42b80c7e570da7db964` (verified 2026-10-29), beyond the earlier `0a272d5cf5471f34eb0e686942357e27f2ee9507` snapshot.
-- Fork `main` currently points to `b5fb661b0a985863f64b52a14ef5c41fb137f7dc`. Compared against current upstream, GitHub reports the histories as diverged: 157 commits on the upstream side / 2 commits on the fork side beyond the merge base. The prior PR #11 staging head is stale and only represented the older `0a272d5...` snapshot. It is not a clean fast-forward and must not be merged as-is. A fresh candidate should start from current upstream and preserve/review fork-only commits and documentation before any default-branch rewrite.
-- The GitHub connector returned no commit status checks or workflow runs for this fork HEAD; synchronized commit identity does not itself prove tests passed.
+- Current upstream `main` at this audit: `c0c3902207d6b1a33709e42b80c7e570da7db964`.
+- Current fork `main`: `b5fb661b0a985863f64b52a14ef5c41fb137f7dc`.
+- GitHub compares the fork and current upstream as diverged: 157 upstream commits and 2 fork commits beyond their shared merge base. That is not a fast-forward and must not be resolved by resetting or force-pushing the default branch.
+- The prior draft sync PR #11 uses a stale staging SHA `0a272d5cf5471f34eb0e686942357e27f2ee9507`; do not merge it as-is. A new branch `sync/upstream-main-2026-10-29` was created from the current upstream main as a clean review reference. It does not contain a merge commit or change the fork default branch.
+- The connector rejected an attempted non-force update because it would not be a fast-forward. The safe route is to inspect fork-only commits, port valuable work onto a fresh current-upstream branch, validate the result, and then propose a focused PR. Branch synchronization is not complete.
 
-## PR cleanup
+## PR and branch handling
 
-No PRs remain open in the personal REA fork. Staging PRs #1–#10 are closed, not merged. Several were duplicate or superseded staging attempts for readiness association, native matching allowance, EVM input-size classification, rollback retry, or provider diagnostics. Their historical PR records remain for auditability. Their branch refs are retained to avoid deleting unique work before local-backup confirmation.
+Staging PRs #1–#10 in the fork are historical closed attempts, several superseded by upstream behavior. Their refs remain preserved pending a unique-work/local-backup audit. The existing PR #11 remains draft with a corrected description of the stale candidate. Do not treat PR mergeability as evidence that histories can be synchronized safely.
 
-Upstream contributions have to be evaluated on the canonical repository and current checks. A matching or superseded change in a fork does not imply an upstream PR merged.
+## Required reconciliation procedure
 
-## Topic branch handling
+1. Compare the fork-only commits to current upstream and inspect all changed files, generated artifacts, contracts, dependencies, workflows, and tests.
+2. Preserve any valuable fork-only audit/documentation changes, preferably through a new current-upstream-based branch.
+3. Run the project's documented tests and checks on that candidate; confirm required upstream CI on the exact head.
+4. Open/update one focused PR for human review. Do not reset/force-push the default branch or delete any branches while unique work remains unreviewed.
 
-The fork has many issue-specific and staging branches. These are not automatically identical to upstream main just because the fork default branch is synchronized. Keep topic branches until each has been reviewed for:
-- whether its change is present in upstream main or a merged PR,
-- whether a current upstream PR still uses it,
-- whether the branch contains unique commits or local-only work,
-- whether a recovery copy exists.
+## Limits
 
-In particular, do not delete the branches for current review candidates based solely on age or naming. Release-please branches, staging/validation branches, test branches, and feature branches may be part of a live workflow.
-
-## Limits and follow-up
-
-- GitHub connector does not expose a branch-delete operation, so topic-branch deletion was not performed.
-- PR #11 has been renamed and its body updated to clearly mark the old staging commit as stale and keep the change draft.
-- Full test execution, local working-tree cleanliness, upstream review outcomes, and all security/CI checks have not been verified by this audit.
-- Use the canonical upstream PR pages for final review and keep descriptions accurate about passed checks and validation gaps.
+The connected GitHub view cannot certify local working-tree cleanliness, local-only commits, full tests, or a maintainer's semantic acceptance. No default-branch rewrite or branch deletion was performed.

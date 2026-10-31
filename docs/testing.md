@@ -382,6 +382,31 @@ matching real-provider lane.
 | Client configuration or schema conversion | [Native client lane](client-verification.md)                  | Distinguish loopback models from live services              |
 | Agent investigation quality               | [Agent evaluation](#agent-evaluation-and-conformance-records) | Review transcript and scenario-specific evidence            |
 
+### Provider-backed workflow verification
+
+For a new or changed provider-backed tool, select tests from the analyst's
+question and the facts the contract claims, not from an upstream command list.
+Use the existing workflow as a baseline and identify what the proposed tool
+adds. Choose the relevant cases below; do not require every provider or a
+Cartesian matrix when it would not change the claim.
+
+- Use a controlled target with independently known facts and a meaningful
+  counterexample. Compare native provider output with the target or a
+  format-aware oracle; a provider label, a mock, or another REA projection is
+  not independent proof of the underlying fact.
+- Exercise the affected public CLI/MCP workflow, including handoffs between
+  calls. Assert the requested result, caller-selected inputs, source identity,
+  evidence and coverage. Check that unavailable, partial and empty outcomes
+  retain their different meanings across the producing and consuming boundaries.
+- Where relevant, continue after a mixed success, failed request, cancellation
+  or close/reopen. Verify the next supported recovery and preservation of prior
+  results and resource ownership. Use the applicable lifecycle regressions below.
+- Record the provider version, host, fixture, actual entrypoint, controlled
+  faults and skipped or unavailable coverage. A simulated provider tests the
+  integration boundary; a scripted sequence tests that sequence, not an agent's
+  ability to discover it. Run the matching real-provider and agent lanes when
+  their respective claims require them.
+
 ## Test design and pruning
 
 Prefer real public CLI/MCP workflows, then production-boundary integration,
@@ -1600,16 +1625,22 @@ workflows run static checks and the Linux suite. Website changes run website
 checks. Provider workflow changes validate the workflow and run that provider's
 verifier. Changes under `bridge/ghidra/` also select the `ghidra_bridge` lane,
 which compiles the packaged bridge sources against the pinned Ghidra 12.1.4
-jars with `npm run verify:ghidra:bridge-sources`. It never launches Ghidra or
-imports a target, so a missing import fails the PR instead of every Ghidra
-session. The launcher, compiler and package checks share named required source
+jars with `npm run verify:ghidra:bridge-sources`. That compile step never
+launches Ghidra or imports a target, so a missing import fails the PR instead
+of every Ghidra session. The launcher, compiler and package checks share named required source
 roles. The manifest must match the complete Java cohort, so deleting a helper
 or adding an unregistered dependency cannot silently change the shipped set.
 The preflight reuses the provider's Java Properties parser with the pinned Node
 toolchain's native type stripping, without an npm install or runtime build.
 The shared release policy owns the verified version and JDK major. CI checks
 the archive pin before downloading and verifies the extracted SDK version;
-changes to these source owners also select the compile lane.
+changes to these source owners also select the compile lane. After compiling,
+the lane launches headless Ghidra on source-owned instruction bytes with
+`-noanalysis`. The ARM/Thumb probe sets each instruction's mode explicitly and
+checks the bridge's decoder-context readback. The decode probes check that
+`ARM:LE:32:Cortex`, `ARM:LE:32:v8-m` and `Xtensa:LE:32:default` decode their
+bytes from each language's default context. The bytes are never executed, and
+edits to those probe scripts also select the lane.
 Manual-provider/Android workflow changes run workflow validation only.
 The four-version SQLite compatibility matrix has its own `sqlite` scope for
 SQLite implementation, contracts, CLI/MCP registration, fixtures, and shared

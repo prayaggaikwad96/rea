@@ -68,7 +68,10 @@ function renamed to `dead` remains selectable by name. Use the names returned
 by the inventory, including their namespaces and any platform symbol prefix.
 Ghidra also accepts secondary symbols at a function entry, such as an imported
 `_main` label. A label inside a function is not a procedure-name selector; use
-its address when selecting the containing function.
+its address when selecting the containing function. `search_procedures` matches
+the same names, in leaf or qualified spelling: the function appears once with
+its primary name as `value`, and `matched_aliases` lists the qualified names of
+the secondary symbols that matched.
 Overloads can share a fully qualified name; ambiguity errors return every
 matching entry address so the caller can select the intended function directly.
 
@@ -185,11 +188,23 @@ observed entry label. An interior address therefore remains visible without
 being mistaken for the function entry. Identity failures are reported as
 `procedure.status: "unknown"`; label failures leave a null name and `name_error`.
 Neither failure discards usable pseudocode, and names are not parsed from it.
+A provider answer without pseudocode is an error item that keeps that
+observation's own `limitations`, so a reason the provider reported for that
+entry, such as a Kuna export failure or a missing body, stays with the item.
+Null pseudocode is `capability_unavailable`; empty or non-text pseudocode is
+`unreadable_output`. Provider failures keep their typed error. Successful items
+do not repeat limitations; the batch Evidence aggregates every observation's
+limitations by provider and operation.
 Resolved entries also appear in the composed Evidence locations. New batch
 Evidence commits the revised workflow profile; retained historical Evidence
 remains valid. This tool
 has no dedicated CLI command; the existing `decompile` command remains the
 single-procedure CLI operation.
+
+`detail: "summary"` retains the complete batch and returns only its counts,
+identities and sizes. `inspect_analysis_view` then reads rows or one body from
+the retained record, an Evidence file or a portable bundle without repeating
+decompilation: see [selected batch results](mcp-contracts.md#selected-batch-decompile-results).
 
 Each batch schedules one provider read at a time, but has no shared input-count
 or aggregate retained-output allowance. It retains every requested row and full
@@ -418,9 +433,30 @@ Within one value trace, each exact procedure selector is attempted at most once,
 including failed analyses. A failed seed returns the provider's original typed
 failure and corrective guidance; it cannot establish a trace or target identity.
 Failures while expanding a validated seed remain unknown observations and do not
-establish canonical function identity. A successful seed without a native def-use
+establish canonical function identity. A cancelled expansion read returns the
+cancellation. An expansion read whose provider cannot confirm cleanup of
+resources it owns stops the trace: the result is that provider's own
+`cleanup_incomplete` failure with its resources and any bound cleanup retry, and the work
+admitted before the stop is retained as partial Evidence with a located unknown
+at the stopping read. A successful seed without a native def-use
 model still returns its procedure and an explicit coverage unknown. A new trace
 can retry failed selectors.
+
+Paging and traversal completeness are separate facts. `page_truncated` means the
+page omits retained nodes, and the edges they source, before `offset` or after
+`next_offset`. Every page repeats `traversal`: `complete`, or `truncated` with
+`reasons` naming each observed cause: the `max_depth`, `max_functions`,
+`max_call_sites`, `max_nodes` or `max_edges` budget, the fixed
+`node_payload_bytes` allowance, `provider_pcode_truncated`,
+`ambiguous_call_candidates`, or, only in a stopped trace's partial Evidence,
+`cleanup_incomplete`. Each cause also has a located unknown. A budget is
+reported only after it rejects work, so an exactly filled budget is not
+truncation; a depth or candidate limit is reported only when no other path
+analyzes or queues that destination. `total_nodes` and `total_edges` count
+retained rows. `truncated` remains true for either kind of omission. Failed
+analyses and unresolved calls stay in `unknowns` and do not truncate the
+traversal. Each page reruns analysis; pages are not pinned to one snapshot
+across session edits.
 
 The raw Java `is_dead` flag can remain set after Ghidra decodes a live block;
 `block_membership` reports actual syntax-tree membership separately.
@@ -1146,14 +1182,26 @@ These IDs select comparison Evidence, not function dossiers or summary views.
 Complete inline comparisons remain accepted and can be mixed with references.
 The current server must retain the comparisons and their original source closure;
 import the complete source bundle after a session handoff. Missing or damaged
-records are explicit failures. Aggregating static differences does not establish
+records are explicit failures. A missing required retained record reports its exact
+`evidence_id` with `details.reference_scope: "retained-closure"`. Import the
+originating bundle with its linked sources, or re-create those observations in the
+current investigation, before retrying; resending the inline comparison alone
+does not restore its closure. Aggregating static differences does not establish
 observed runtime change.
 
 `set_address_name` and `set_addresses_names` give Ghidra sessions the same
 compact naming results as Hopper: a local function entry renames that function,
 and any other mapped address, such as a global, receives a new or renamed primary
-label. A batch applies each address separately and reports one success boolean
-per address. Use them to name many globals and helpers cheaply; use
+label. A batch decides every address from the names held before it: addresses
+that request the same name in one namespace, or a name another selected address
+holds, are rejected without applying them, so JSON member order never selects a
+winner. Every other address applies separately, and each address reports one
+success boolean. `raw_result.failures` gives each failed address's canonical
+address and reason. A contested name appears once in `raw_result.conflicts`,
+with its namespace, requesting addresses and holding addresses, and conflict
+failures refer to it by index. To move a label between
+addresses, rename its holder first and assign the name in a later call. Use
+them to name many globals and helpers cheaply; use
 `annotate_native_function` when you also want comments and a refreshed dossier.
 Ghidra name edits preserve the existing namespace. Supply either a leaf name
 such as `renamed` or a fully qualified name in that namespace, such as

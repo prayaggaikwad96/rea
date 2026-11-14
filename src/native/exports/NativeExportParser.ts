@@ -2,6 +2,8 @@ import {
   BinaryFormatFailure,
   BinaryReader,
   BinaryResourceFailure,
+  isBinaryFormatOrStringLimitFailure,
+  type BinaryStringReadLimitFailure,
   mappedFileOffset,
   imageFileMappings,
   readMappedCString,
@@ -43,10 +45,29 @@ const retainedTextBytes = (...strings: readonly (string | null)[]): number =>
     0,
   );
 
+/** Which fixed export inventory allowance refused the image. */
+export type NativeExportLimit = "rows" | "retained_text";
+
+/**
+ * A fixed inventory allowance was exhausted. `limit` identifies the exhausted
+ * allowance so consumers derive its units from the producer, not from text:
+ * `rows` is an entry count and `retained_text` a byte budget.
+ */
+export class NativeExportLimitFailure extends BinaryResourceFailure {
+  constructor(
+    readonly limit: NativeExportLimit,
+    allowance: number,
+    message: string,
+  ) {
+    super("structure", allowance, message);
+    this.name = "NativeExportLimitFailure";
+  }
+}
+
 const checkRetainedText = (bytes: number): void => {
   if (bytes > MAXIMUM_RETAINED_TEXT_BYTES)
-    throw new BinaryResourceFailure(
-      "structure",
+    throw new NativeExportLimitFailure(
+      "retained_text",
       MAXIMUM_RETAINED_TEXT_BYTES,
       `Export names exceed the ${String(MAXIMUM_RETAINED_TEXT_BYTES)}-byte retained-text allowance`,
     );
@@ -74,8 +95,8 @@ const hex = (value: bigint | number) => `0x${value.toString(16)}`;
 
 const rowBudget = (count: number, label: string): void => {
   if (count > MAX_NATIVE_EXPORT_ROWS)
-    throw new BinaryResourceFailure(
-      "structure",
+    throw new NativeExportLimitFailure(
+      "rows",
       MAX_NATIVE_EXPORT_ROWS,
       `${label} declares ${String(count)} entries, above the ${String(MAX_NATIVE_EXPORT_ROWS)}-entry export inventory allowance`,
     );
@@ -96,7 +117,7 @@ const coverage = (
       };
 
 const failureMessage = (cause: unknown): string => {
-  if (cause instanceof BinaryFormatFailure) return cause.message;
+  if (isBinaryFormatOrStringLimitFailure(cause)) return cause.message;
   throw cause;
 };
 
@@ -294,11 +315,21 @@ const versionSectionData = (
   table: { readonly offset: number; readonly size: number };
   names: Buffer;
 } => {
+  if (section.compressed)
+    throw new BinaryFormatFailure(
+      "unsupported",
+      `${label} are SHF_COMPRESSED and were not decompressed`,
+    );
   const strings = sections[section.link];
   if (strings?.type !== SHT_STRTAB)
     throw new BinaryFormatFailure(
       "malformed",
       `${label} do not link to a string table`,
+    );
+  if (strings.compressed)
+    throw new BinaryFormatFailure(
+      "unsupported",
+      `${label} strings are SHF_COMPRESSED and were not decompressed`,
     );
   const stringRange = reader.fileRange(
     strings.offset,
@@ -340,7 +371,7 @@ const createVersionNameReader = () => {
   const decodedNames = new Map<
     string,
     | { readonly value: DecodedElfString | null }
-    | { readonly failure: BinaryFormatFailure }
+    | { readonly failure: BinaryFormatFailure | BinaryStringReadLimitFailure }
   >();
   let cacheBytes = 0;
   const chargeCache = (bytes: number): void => {
@@ -363,7 +394,7 @@ const createVersionNameReader = () => {
     try {
       raw = readElfStringBytes(names, offset);
     } catch (cause) {
-      if (!(cause instanceof BinaryFormatFailure)) throw cause;
+      if (!isBinaryFormatOrStringLimitFailure(cause)) throw cause;
       // Invalid offsets/unterminated aliases must not repeatedly scan strings
       // either. Account for the cached error and its stack conservatively.
       chargeCache(4096);
@@ -407,7 +438,9 @@ function* readVersionNames(
     textBytes = nextTextBytes;
   };
   const verneed = sections.find(({ type }) => type === SHT_GNU_VERNEED);
-  if (verneed !== undefined) {
+  // sh_info is the requirement count. An empty region contributes no names,
+  // so its compressed storage is not a failed requirement read.
+  if (verneed !== undefined && verneed.info !== 0) {
     try {
       const { table, names } = versionSectionData(
         reader,
@@ -485,7 +518,9 @@ function* readVersionNames(
   }
   // GNU lookup installs requirement names first, then definition names.
   const verdef = sections.find(({ type }) => type === SHT_GNU_VERDEF);
-  if (verdef !== undefined) {
+  // sh_info is the definition count. Zero definitions cannot replace a
+  // requirement index, so compressed storage of that empty table is unread.
+  if (verdef !== undefined && verdef.info !== 0) {
     try {
       const { table, names } = versionSectionData(
         reader,
@@ -545,7 +580,13 @@ function* readVersionNames(
         }
       }
     } catch (cause) {
-      if (cause instanceof ElfVersionWorkFailure) namesByIndex.clear();
+      // An unread compressed definition table may replace any requirement
+      // index. Its absence cannot justify falling back to requirement names.
+      if (
+        cause instanceof ElfVersionWorkFailure ||
+        (cause instanceof BinaryFormatFailure && cause.kind === "unsupported")
+      )
+        namesByIndex.clear();
       issues.push({
         code: "version_unresolved",
         location: hex(verdef.offset),
@@ -605,6 +646,32 @@ function* parseElfExports(
     };
   const width = directory.bits === 64 ? 24 : 16;
   const strings = sections[dynsym.link];
+  const compressed = dynsym.compressed
+    ? dynsym
+    : strings?.type === SHT_STRTAB && strings.compressed
+      ? strings
+      : null;
+  if (compressed !== null) {
+    const reason = `The ELF ${compressed === dynsym ? "dynamic symbol table" : "dynamic string table"} is SHF_COMPRESSED and was not decompressed; export identities remain unknown`;
+    return {
+      ...result,
+      exports: [],
+      coverage: {
+        status: "unsupported",
+        reason,
+        examined_entries: 0,
+        exports: 0,
+      },
+      issues: [
+        {
+          code: "table_unavailable",
+          location: hex(compressed.offset),
+          message: reason,
+        },
+      ],
+      limitations: ELF_LIMITATIONS,
+    };
+  }
   if (
     dynsym.entry_size !== BigInt(width) ||
     dynsym.size % BigInt(width) !== 0n ||
@@ -647,6 +714,11 @@ function* parseElfExports(
   let versions: number | null = null;
   if (versym !== undefined) {
     try {
+      if (versym.compressed)
+        throw new BinaryFormatFailure(
+          "unsupported",
+          "ELF symbol versions are SHF_COMPRESSED and were not decompressed",
+        );
       if (versym.size !== BigInt(count * 2))
         throw new BinaryFormatFailure(
           "malformed",

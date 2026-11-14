@@ -1,3 +1,8 @@
+import { parseCliJsonInput } from "../cliJsonInput.js";
+import {
+  fetchedSourceMapLimitCliOptions,
+  sourceMapLimitsFromCli,
+} from "./sourceMapLimits.js";
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { webBundleDeliveryOptions } from "./javascriptRouteDelivery.js";
 import {
@@ -25,16 +30,19 @@ import { analyzeWebBundleInputSchema } from "../domain/webBundleAnalysis.js";
 import { observeWebSessionInputSchema } from "../domain/browserSession.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import type { Logger } from "pino";
+import { cliDomainInput } from "./domainInput.js";
 import { cliDecimalField } from "./options.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import {
   browserPageInspectionOptions,
-  browserScopeOptions,
   observationDuration,
+  passiveBrowserScopeOptions,
   selectedCommandTimeout,
+  selectedDiscoveryTimeout,
 } from "../cliObservationOptions.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
+import { cliProgressReporter } from "./cliProgress.js";
 
 /** Register CLI equivalents of the passive browser MCP tools. */
 export const registerBrowserCommands = (
@@ -55,12 +63,13 @@ const registerTargetList = (
     description:
       "List page targets from a selected loopback CDP browser, optionally filtered by origin",
     args: z.object({
-      endpoint: z
-        .string()
-        .describe("Loopback CDP HTTP endpoint or browser WebSocket URL"),
+      endpoint: cliDomainInput(
+        listBrowserTargetsInputSchema.shape.cdp_endpoint,
+      ),
     }),
     options: z.object({
-      allowedOrigins: browserScopeOptions.allowedOrigins,
+      allowedOrigins: passiveBrowserScopeOptions.allowedOrigins,
+      discoveryTimeoutMs: passiveBrowserScopeOptions.discoveryTimeoutMs,
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
@@ -69,6 +78,7 @@ const registerTargetList = (
           const input = {
             cdp_endpoint: args.endpoint,
             allowed_origins: options.allowedOrigins,
+            ...selectedDiscoveryTimeout(options.discoveryTimeoutMs),
           };
           const parsed = listBrowserTargetsInputSchema.safeParse(input);
           if (!parsed.success)
@@ -103,10 +113,12 @@ const registerPageInspection = (
     description:
       "Passively inspect one page through CDP, defaulting to its current origin",
     args: z.object({
-      endpoint: z
-        .string()
-        .describe("Loopback CDP HTTP endpoint or browser WebSocket URL"),
-      targetId: z.string().describe("Target ID from list-browser-targets"),
+      endpoint: cliDomainInput(
+        listBrowserTargetsInputSchema.shape.cdp_endpoint,
+      ),
+      targetId: observeWebSessionInputSchema.shape.target_id.describe(
+        "Target ID from list-browser-targets",
+      ),
     }),
     options: browserPageInspectionOptions,
     run: ({ args, options }) =>
@@ -125,6 +137,7 @@ const registerPageInspection = (
             include_script_sources: options.includeScriptSources,
             include_storage_keys: options.includeStorageKeys,
             include_storage_fingerprints: options.includeStorageFingerprints,
+            ...selectedDiscoveryTimeout(options.discoveryTimeoutMs),
             ...selectedCommandTimeout(options.commandTimeoutMs),
           };
           const parsed = inspectWebPageInputSchema.safeParse(input);
@@ -160,15 +173,23 @@ const registerBundleAnalysis = (
     description:
       "Capture and statically analyze a page bundle, defaulting to the selected target origin",
     args: z.object({
-      endpoint: z
-        .string()
-        .describe("Loopback CDP HTTP endpoint or browser WebSocket URL"),
-      targetId: z.string().describe("Target ID from list-browser-targets"),
+      endpoint: cliDomainInput(
+        listBrowserTargetsInputSchema.shape.cdp_endpoint,
+      ),
+      targetId: observeWebSessionInputSchema.shape.target_id.describe(
+        "Target ID from list-browser-targets",
+      ),
     }),
     options: z.object({
-      ...browserScopeOptions,
+      ...passiveBrowserScopeOptions,
       ...webBundleDeliveryOptions,
       observationMs: observationDuration(500),
+      semanticPrecision: z
+        .string()
+        .optional()
+        .describe(
+          "Inline JSON or JSON file of semantic_precision evaluator budgets for each inert script.",
+        ),
       fetchSourceMaps: z
         .boolean()
         .default(false)
@@ -180,6 +201,7 @@ const registerBundleAnalysis = (
       totalAnalysisTimeoutMs: cliDecimalField(
         analyzeWebBundleInputSchema.shape.total_analysis_timeout_ms,
       ),
+      ...fetchedSourceMapLimitCliOptions,
       sourceMapFetchTimeoutMs: cliDecimalField(
         analyzeWebBundleInputSchema.shape.source_map_fetch_timeout_ms,
       ),
@@ -193,6 +215,15 @@ const registerBundleAnalysis = (
             webRoutesDeliverySchema,
           );
           if (!delivery.ok) return projectAnalysisError(delivery.error);
+          const precision =
+            options.semanticPrecision === undefined
+              ? undefined
+              : await parseCliJsonInput(
+                  options.semanticPrecision,
+                  "analyze_web_bundle",
+                  signal,
+                );
+          if (precision !== undefined && !precision.ok) return precision.error;
           const provider = createBrowserObservationProvider();
           const input = {
             cdp_endpoint: args.endpoint,
@@ -201,6 +232,10 @@ const registerBundleAnalysis = (
             observation_ms: options.observationMs,
             include_script_sources: true,
             fetch_source_maps: options.fetchSourceMaps,
+            ...(precision === undefined
+              ? {}
+              : { semantic_precision: precision.value }),
+            ...sourceMapLimitsFromCli(options),
             ...(options.maxHeapMb === undefined
               ? {}
               : { max_heap_mb: options.maxHeapMb }),
@@ -215,6 +250,7 @@ const registerBundleAnalysis = (
               : {
                   source_map_fetch_timeout_ms: options.sourceMapFetchTimeoutMs,
                 }),
+            ...selectedDiscoveryTimeout(options.discoveryTimeoutMs),
             ...selectedCommandTimeout(options.commandTimeoutMs),
           };
           const parsed = analyzeWebBundleInputSchema.safeParse(input);
@@ -250,13 +286,15 @@ const registerObservationSession = (
   cli.command(CLI_COMMANDS.observeWebSession, {
     description: "Observe user-driven page navigation during a chosen window",
     args: z.object({
-      endpoint: z
-        .string()
-        .describe("Loopback CDP HTTP endpoint or browser WebSocket URL"),
-      targetId: z.string().describe("Target ID from list-browser-targets"),
+      endpoint: cliDomainInput(
+        listBrowserTargetsInputSchema.shape.cdp_endpoint,
+      ),
+      targetId: observeWebSessionInputSchema.shape.target_id.describe(
+        "Target ID from list-browser-targets",
+      ),
     }),
     options: z.object({
-      ...browserScopeOptions,
+      ...passiveBrowserScopeOptions,
       observationMs: observationDuration(10_000, 1),
     }),
     run: ({ args, options }) =>
@@ -268,6 +306,7 @@ const registerObservationSession = (
             allowed_origins: options.allowedOrigins,
             target_id: args.targetId,
             observation_ms: options.observationMs,
+            ...selectedDiscoveryTimeout(options.discoveryTimeoutMs),
             ...selectedCommandTimeout(options.commandTimeoutMs),
           };
           const parsed = observeWebSessionInputSchema.safeParse(input);
@@ -280,7 +319,12 @@ const registerObservationSession = (
               ),
             );
           return await finishAnalysisCommand(
-            () => observeWebSession(provider, parsed.data, { signal }),
+            () =>
+              observeWebSession(provider, parsed.data, {
+                signal,
+                // Report the armed observation on stderr, as MCP does.
+                progress: cliProgressReporter,
+              }),
             {
               close: async () => {
                 await provider.close?.();

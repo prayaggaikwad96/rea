@@ -1,9 +1,14 @@
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { parseCliAnalysisEvidenceDelivery } from "./analysisEvidenceDelivery.js";
 import { javaScriptRoutesDeliverySchema } from "../domain/analysisView/javascriptRoutesView.js";
+
 import { isAbsolute, resolve, sep } from "node:path";
 
 import { Cli, z } from "incur";
+import {
+  localPathStringSchema,
+  nulFreeStringSchema,
+} from "../domain/localPath.js";
 
 import { logCliCommand } from "../cliLogging.js";
 import {
@@ -11,11 +16,14 @@ import {
   listElectronTargetsInputSchema,
 } from "../domain/javascript/electronObservation.js";
 import { electronActiveObservationInputSchema } from "../domain/javascript/electronActiveObservation.js";
+import { reconcileJavaScriptRuntimeRequestSchema } from "../contracts/javascript/applicationWorkflowInputContracts.js";
+import { getEvidenceInputContract } from "../domain/evidenceInputContract.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { projectInputIssues } from "../domain/inputIssueProjection.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { Logger } from "pino";
+import { cliDomainInput } from "./domainInput.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { createElectronFuseService } from "../composition/electronFuses.js";
 import { parseCliJsonInput, resolveCliJsonPaths } from "../cliJsonInput.js";
@@ -36,6 +44,7 @@ import {
   evidenceBundleOption,
   runEvidenceInputCommand,
 } from "./evidenceInputCommand.js";
+import { jsonInputArgument } from "./jsonInputArgument.js";
 
 /** Register CLI equivalents of the Electron MCP tools. */
 export const registerElectronCommands = (
@@ -63,11 +72,9 @@ const registerElectronFuseCommand = (
     description:
       "Inspect packaged Electron fuse bytes without launching the application",
     args: z.object({
-      path: z
-        .string()
-        .describe(
-          "Local Electron .app, Electron Framework binary, PE executable, or ELF executable",
-        ),
+      path: nulFreeStringSchema.describe(
+        "Local Electron .app, Electron Framework binary, PE executable, or ELF executable",
+      ),
     }),
     run: ({ args }) =>
       withCommandCancellation((signal) =>
@@ -112,11 +119,10 @@ const registerElectronActiveCommand = (
   cli.command(CLI_COMMANDS.captureElectronScenario, {
     description: "Run one owned Electron scenario with cancellable actions",
     args: z.object({
-      inputJson: z
-        .string()
-        .describe(
-          "Inline JSON or a JSON file matching capture_electron_scenario",
-        ),
+      inputJson: jsonInputArgument(
+        "Inline JSON or a JSON file matching capture_electron_scenario",
+        electronActiveObservationInputSchema,
+      ),
     }),
     run: ({ args }) =>
       withCommandCancellation((signal) =>
@@ -180,11 +186,11 @@ const registerJavaScriptRuntimeReconciliationCommand = (
     description:
       "Reconcile static application and passive runtime Evidence JSON",
     args: z.object({
-      inputJson: z
-        .string()
-        .describe(
-          "Inline JSON or a JSON file path matching reconcile_javascript_runtime",
-        ),
+      inputJson: jsonInputArgument(
+        "Inline JSON or a JSON file path matching reconcile_javascript_runtime",
+        getEvidenceInputContract(reconcileJavaScriptRuntimeRequestSchema)
+          .frameSchema,
+      ),
     }),
     options: z.object({ evidenceBundle: evidenceBundleOption }),
     run: ({ args, options }) =>
@@ -243,7 +249,9 @@ const registerElectronTargetList = (
     description:
       "List local file pages exposed by the selected Electron CDP endpoint",
     args: z.object({
-      endpoint: z.string().describe("Literal-loopback Electron CDP endpoint"),
+      endpoint: cliDomainInput(
+        listElectronTargetsInputSchema.shape.cdp_endpoint,
+      ).describe("Literal-loopback Electron CDP endpoint"),
     }),
     run: ({ args }) =>
       withCommandCancellation((signal) =>
@@ -286,8 +294,13 @@ const registerElectronPageInspection = (
   cli.command(CLI_COMMANDS.inspectElectronPage, {
     description: "Passively inspect one Electron file page",
     args: z.object({
-      endpoint: z.string().describe("Literal-loopback Electron CDP endpoint"),
-      targetId: z.string().describe("Target ID from list-electron-targets"),
+      endpoint: cliDomainInput(
+        listElectronTargetsInputSchema.shape.cdp_endpoint,
+      ).describe("Literal-loopback Electron CDP endpoint"),
+      targetId: z
+        .string()
+        .min(1)
+        .describe("Target ID from list-electron-targets"),
     }),
     options: electronPageInspectionOptions,
     run: ({ args, options }) =>
@@ -336,7 +349,9 @@ const registerJavaScriptApplicationCommand = (
     description:
       "Statically reconstruct a local JavaScript/Electron application",
     args: z.object({
-      path: z.string().describe("ASAR or extracted application path"),
+      path: localPathStringSchema.describe(
+        "ASAR or extracted application path",
+      ),
     }),
     options: javascriptApplicationOptions,
     run: ({ args, options }) =>
@@ -357,11 +372,22 @@ const registerJavaScriptApplicationCommand = (
               signal,
             );
             if (!sourcePaths.ok) return sourcePaths.error;
+            const precision =
+              options.semanticPrecision === undefined
+                ? undefined
+                : await parseCliJsonInput(
+                    options.semanticPrecision,
+                    "analyze_javascript_application",
+                    signal,
+                  );
+            if (precision !== undefined && !precision.ok)
+              return precision.error;
             return runCliJavaScriptApplicationAnalysis(
               {
-                // An empty path names no file; leave it for input validation.
-                input_path:
-                  args.path === "" ? args.path : absoluteCallerPath(args.path),
+                input_path: absoluteCallerPath(args.path),
+                ...(precision === undefined
+                  ? {}
+                  : { semantic_precision: precision.value }),
                 format: options.artifactFormat,
                 integrity_policy: options.integrityPolicy,
                 ...(options.maxSemanticNodes === undefined

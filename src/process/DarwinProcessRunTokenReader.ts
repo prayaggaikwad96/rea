@@ -1,3 +1,9 @@
+import {
+  assertProcessOwnershipInspectionActive,
+  ProcessOwnershipInspectionCancelled,
+  isProcessOwnershipInspectionCancellation,
+  rethrowProcessOwnershipInspectionFailure,
+} from "./ProcessInspectionCancellation.js";
 import { ProcessAdmissionError } from "./ProcessAdmissionError.js";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { rmSync } from "node:fs";
@@ -133,7 +139,7 @@ export const resolveSwiftcCompileTimeoutMs = (
 };
 
 /** Name the existing swiftc deadline when a helper compile times out. */
-export const swiftcCompileTimeoutRecovery = (timeoutMs: number): string =>
+const swiftcCompileTimeoutRecovery = (timeoutMs: number): string =>
   `The effective REA_SWIFTC_COMPILE_TIMEOUT_MS value is ${String(timeoutMs)} ms (integer range 1..${String(MAX_NODE_TIMER_DELAY_MS)}; omitted default ${String(DEFAULT_SWIFTC_COMPILE_TIMEOUT_MS)} ms). Set it in the environment that starts REA and restart REA; the next ownership-helper compile uses the new value.`;
 
 /** Bound on compiler diagnostics embedded in the inspection failure text. */
@@ -176,6 +182,29 @@ export class DarwinProcessOwnershipInspectionError extends Error {
   readonly capturedOutput: AnalysisCapturedOutput | undefined;
   readonly cleanupFailure: AnalysisError | undefined;
   readonly cancellation: { readonly reason: unknown } | undefined;
+
+  /** Whether helper preparation failed because its compiler hit its deadline. */
+  get compilerTimedOut(): boolean {
+    return this.compilerOutcome?.outcome === "timed_out";
+  }
+
+  /** The compiler deadline and its recovery, when it is known. */
+  get compileTimeout():
+    | {
+        readonly timeoutMs: number;
+        readonly userMessage: string;
+        readonly remediationAction: string;
+      }
+    | undefined {
+    const outcome = this.compilerOutcome;
+    if (outcome?.outcome !== "timed_out" || outcome.timeoutMs === undefined)
+      return undefined;
+    return {
+      timeoutMs: outcome.timeoutMs,
+      userMessage: `The macOS process ownership helper compiler reached its REA_SWIFTC_COMPILE_TIMEOUT_MS deadline of ${String(outcome.timeoutMs)} ms.`,
+      remediationAction: swiftcCompileTimeoutRecovery(outcome.timeoutMs),
+    };
+  }
 
   /** Preserve the physical preparation failure while following the exact cleanup owner. */
   withCleanupFailure(
@@ -353,18 +382,6 @@ interface ProcessReaderCompilation {
   settled: boolean;
 }
 
-const abortReason = (signal: AbortSignal): unknown => {
-  if (signal.reason !== undefined) return signal.reason;
-  const error = new Error("The operation was aborted");
-  error.name = "AbortError";
-  return error;
-};
-
-const isExpectedAbort = (cause: unknown, signal: AbortSignal): boolean =>
-  signal.aborted &&
-  (cause === signal.reason ||
-    (cause instanceof Error && cause.name === "AbortError"));
-
 type CompilationWaitOutcome =
   | { readonly kind: "completed"; readonly result: Result<string, unknown> }
   | { readonly kind: "cancelled"; readonly reason: unknown };
@@ -527,7 +544,8 @@ export const createDarwinProcessRunTokenReader = (
       const cached = bypassCache
         ? undefined
         : await helperCache?.lookup(signal);
-      if (signal.aborted || closed) throw abortReason(signal);
+      if (signal.aborted || closed)
+        throw new ProcessOwnershipInspectionCancelled(signal.reason);
       // A verified shared entry needs no per-run root and is never removed.
       if (cached?.kind === "hit") {
         sharedExecutable = cached.executable;
@@ -540,7 +558,8 @@ export const createDarwinProcessRunTokenReader = (
       root = operationRoot;
       process.once("exit", cleanupAtExit);
       exitCleanupInstalled = true;
-      if (signal.aborted || closed) throw abortReason(signal);
+      if (signal.aborted || closed)
+        throw new ProcessOwnershipInspectionCancelled(signal.reason);
       const output = join(operationRoot.path, "reader");
       // swiftc keeps intermediate objects under TMPDIR, so keep them inside
       // the root that cleanup removes.
@@ -573,16 +592,18 @@ export const createDarwinProcessRunTokenReader = (
           env: compilerEnvironment,
         });
       } catch (cause: unknown) {
-        if (isExpectedAbort(cause, signal)) throw cause;
+        rethrowProcessOwnershipInspectionFailure(cause);
         throw compilerInspectionError(cause, compilerTimeoutMs, compiler);
       }
-      if (signal.aborted || closed) throw abortReason(signal);
+      if (signal.aborted || closed)
+        throw new ProcessOwnershipInspectionCancelled(signal.reason);
       // The per-run root stays owned until close even when the shared copy runs.
       const shared =
         cached?.kind === "miss"
           ? await helperCache?.publish(cached.key, output, signal)
           : undefined;
-      if (signal.aborted || closed) throw abortReason(signal);
+      if (signal.aborted || closed)
+        throw new ProcessOwnershipInspectionCancelled(signal.reason);
       perRunExecutable = output;
       sharedExecutable = shared;
       executable = shared ?? output;
@@ -602,7 +623,12 @@ export const createDarwinProcessRunTokenReader = (
               ? cause
               : new DarwinProcessOwnershipInspectionError(
                   "Darwin process ownership helper preparation failed",
-                  { cause },
+                  {
+                    cause,
+                    ...(cause instanceof ProcessOwnershipInspectionCancelled
+                      ? { cancellation: { reason: cause.reason } }
+                      : {}),
+                  },
                 );
           throw primary.withCleanupFailure(cleanup, {
             close: () => cleanupRoot(operationRoot),
@@ -634,10 +660,10 @@ export const createDarwinProcessRunTokenReader = (
 
   const compile = async (signal?: AbortSignal): Promise<string> => {
     if (closed) throw new ProcessAdmissionError("reader_closed");
-    signal?.throwIfAborted();
+    assertProcessOwnershipInspectionActive(signal);
     while (true) {
       if (closed) throw new ProcessAdmissionError("reader_closed");
-      signal?.throwIfAborted();
+      assertProcessOwnershipInspectionActive(signal);
       if (executable !== undefined) return executable;
       if (compilation === undefined && root !== undefined) {
         await cleanupRoot();
@@ -646,14 +672,19 @@ export const createDarwinProcessRunTokenReader = (
       let operation = compilation;
       if (operation?.aborting === true) {
         const waited = await waitForCompilation(operation, signal);
-        if (waited.kind === "cancelled") throw waited.reason;
-        if (
-          !waited.result.ok &&
-          waited.result.error instanceof
-            DarwinProcessOwnershipInspectionError &&
-          waited.result.error.cleanupFailure !== undefined
-        )
-          throw waited.result.error;
+        if (waited.kind === "cancelled")
+          throw new ProcessOwnershipInspectionCancelled(waited.reason);
+        if (!waited.result.ok) {
+          const failure = waited.result.error;
+          if (
+            (failure instanceof DarwinProcessOwnershipInspectionError &&
+              failure.cleanupFailure !== undefined) ||
+            !isProcessOwnershipInspectionCancellation(
+              operation.primaryFailure?.cause,
+            )
+          )
+            throw failure;
+        }
         continue;
       }
       operation ??= beginCompilation();
@@ -685,7 +716,8 @@ export const createDarwinProcessRunTokenReader = (
           );
         }
       }
-      if (waited.kind === "cancelled") throw waited.reason;
+      if (waited.kind === "cancelled")
+        throw new ProcessOwnershipInspectionCancelled(waited.reason);
       if (!waited.result.ok) throw waited.result.error;
       return waited.result.value;
     }
@@ -704,7 +736,7 @@ export const createDarwinProcessRunTokenReader = (
         stopSignal: "SIGTERM",
         ...(signal === undefined ? {} : { signal }),
       });
-      signal?.throwIfAborted();
+      assertProcessOwnershipInspectionActive(signal);
       return stdout;
     };
     const pending = (async () => {
@@ -730,10 +762,10 @@ export const createDarwinProcessRunTokenReader = (
   };
 
   const read = async (
-    processes: readonly ProcessTableEntry[],
+    processes: readonly Pick<ProcessTableEntry, "pid">[],
     signal?: AbortSignal,
   ): Promise<ReadonlyMap<number, ProcessRunTokenObservation>> => {
-    signal?.throwIfAborted();
+    assertProcessOwnershipInspectionActive(signal);
     if (processes.length === 0) return new Map();
     const pids = processes.map(({ pid }) => String(pid));
     const stdout = await runHelper(pids, signal);
@@ -771,7 +803,7 @@ export const createDarwinProcessRunTokenReader = (
   };
 
   const identities = async (
-    processes: readonly ProcessTableEntry[],
+    processes: readonly Pick<ProcessTableEntry, "pid">[],
     signal?: AbortSignal,
   ): Promise<ReadonlyMap<number, ProcessIdentityObservation>> => {
     if (processes.length === 0) return new Map();

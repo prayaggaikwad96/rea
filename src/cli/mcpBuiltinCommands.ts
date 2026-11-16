@@ -1,12 +1,13 @@
-import { z } from "incur";
+import { mcpRegistrationOptionsSchema } from "../contracts/mcpRegistration.js";
 
 import {
   adaptCliOutputArgumentsForIncur,
   declaredSensitiveValues,
-  splitIncurBuiltinArguments,
+  parseCliGlobalArguments,
+  type CliGlobalArguments,
 } from "../cliBuiltinArguments.js";
 import {
-  parseCliOutputArguments,
+  readCliOutputArguments,
   renderCliDocument,
   type CliOutputFormat,
 } from "../cliOutput.js";
@@ -15,18 +16,14 @@ import type { CliInstance } from "./types.js";
 
 type ServeOptions = NonNullable<Parameters<CliInstance["serve"]>[1]>;
 
-/** Pinned Incur 0.6.1 `mcp` builtin subcommands; Incur does not export them. */
-export const MCP_BUILTIN_SUBCOMMANDS = new Map([
+/** Named MCP commands shared by completion and unknown-command guidance. */
+export const MCP_SUBCOMMANDS = new Map([
   [
     "add",
     {
       description: "Register as MCP server",
       alias: { command: "c" },
-      options: z.object({
-        agent: z.string().optional(),
-        command: z.string().optional(),
-        noGlobal: z.boolean().optional(),
-      }),
+      options: mcpRegistrationOptionsSchema,
     },
   ],
   ["doctor", { description: "Validate MCP server startup and tool listing" }],
@@ -48,29 +45,30 @@ const PLAIN_SHELL_WORD = /^(?!=)[\w./+=:,-]+$/u;
  * Incur 0.6.1 rejects an unknown `mcp` subcommand in TOON regardless of the
  * selected format. Report the same envelope in the explicitly selected format;
  * without one, Incur's TOON or human rendering is already the selected output.
- * The arguments are the caller's normalized ones, before REA adapts output
- * flags for Incur, so the suggested command keeps the caller's selection.
+ * The caller's arguments are read before REA adapts output flags for Incur,
+ * so the suggested command keeps the caller's selection.
  */
 export const reportUnknownMcpSubcommand = (
   name: string,
-  arguments_: readonly string[],
+  global: CliGlobalArguments,
   options: ServeOptions,
 ): boolean => {
-  const { command, commandIndices } = splitIncurBuiltinArguments(arguments_);
+  const { arguments: arguments_, command, commandIndices } = global;
   const [entry, subcommand] = command;
   // Incur receives JSON for REA's delimited formats and no `--columns`.
-  const incurArguments = adaptCliOutputArgumentsForIncur(arguments_);
+  const incur = parseCliGlobalArguments(
+    adaptCliOutputArgumentsForIncur(arguments_),
+  );
+  const incurArguments = incur.arguments;
   const incurOutputValues = new Set(
-    splitIncurBuiltinArguments(incurArguments).outputValues.map(
-      ({ index }) => index,
-    ),
+    incur.outputValues.map(({ index }) => index),
   );
   if (
     entry !== "mcp" ||
     // Incur shows group help for an empty token and owns flag-shaped globals.
     !subcommand ||
     subcommand.startsWith("-") ||
-    MCP_BUILTIN_SUBCOMMANDS.has(subcommand) ||
+    MCP_SUBCOMMANDS.has(subcommand) ||
     // Incur serves these builtins before its `mcp` subcommand branch. An
     // output flag's value is data, even when it is spelled like a builtin.
     incurArguments.some(
@@ -79,12 +77,12 @@ export const reportUnknownMcpSubcommand = (
     )
   )
     return false;
-  const output = parseCliOutputArguments(incurArguments);
+  const output = readCliOutputArguments(incur);
   // Invalid output controls keep Incur's own parse diagnostic.
   if (!output.formatExplicit || !output.validation.ok) return false;
   const sensitive = declaredSensitiveValues(command);
   const text = (value: string): string => redactExplicitText(value, sensitive);
-  const suggestion = [...MCP_BUILTIN_SUBCOMMANDS.keys()].find((candidate) =>
+  const suggestion = [...MCP_SUBCOMMANDS.keys()].find((candidate) =>
     candidate.startsWith(subcommand.toLowerCase()),
   );
   const corrected = arguments_.map((token, index) =>

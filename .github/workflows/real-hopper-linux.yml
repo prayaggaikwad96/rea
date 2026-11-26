@@ -39,6 +39,7 @@ jobs:
         run: sudo --preserve-env=REA_VERIFY_SERVER_COMMAND,PATH npm run verify:setup:linux
 
   verify:
+    if: github.ref == 'refs/heads/main'
     name: Installed package against real Linux Hopper
     runs-on: [self-hosted, Linux, hopper]
     timeout-minutes: 20

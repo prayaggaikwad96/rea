@@ -16,6 +16,7 @@ permissions:
 
 jobs:
   verify:
+    if: github.ref == 'refs/heads/main'
     name: Installed package against real Hopper
     runs-on: [self-hosted, macOS, hopper]
     timeout-minutes: 20
